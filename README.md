@@ -16,20 +16,26 @@ CUDA-compatible GPU (optional, for faster inference)
 Installation
 
 Clone this repository:
+
 git clone https://github.com/kpunited2/test-langchain-chatbot.git
+
 cd test-langchain-chatbot
 
 Create and activate a virtual environment (recommended):
+
 python -m venv venv
+
 source venv/bin/activate  # On Windows, use: venv\Scripts\activate
 
 Install the required dependencies:
+
 pip install -r requirements.txt
 
 
 Usage
 
 Run the chatbot:
+
 python main.py
 
 Open your web browser and navigate to the URL displayed in the terminal (typically http://127.0.0.1:7860).
