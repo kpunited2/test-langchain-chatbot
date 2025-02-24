@@ -1,23 +1,18 @@
 import gradio as gr
 from langchain_community.llms import LlamaCpp
 from langchain_core.runnables import RunnableWithMessageHistory
-from langchain_core.messages import HumanMessage, AIMessage
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_community.document_loaders import JSONLoader
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.memory.chat_message_histories import ChatMessageHistory
 from typing import List, Dict
 import json
 from huggingface_hub import hf_hub_download
-import os
-from functools import partial
 import numpy as np
 
 
 class Chatbot:
-    def __init__(self, llm, prompt):
-        self.templates = self.load_template()
+    def __init__(self, llm, prompt, template_file):
+        self.templates = self.load_template(template_file)
         self.messages_by_id: Dict[str, List] = {}
         self.chain_with_history = RunnableWithMessageHistory(
                                                             prompt | llm,
@@ -36,10 +31,10 @@ class Chatbot:
             self.messages_by_id[session_id] = ChatMessageHistory()
         return self.messages_by_id[session_id]
 
-    def load_template(self):
+    def load_template(self, template_file):
         """Load templates from JSON file."""
-        with open("templates.json", 'r') as f:
-            return json.load(f)
+        with open(template_file, 'r') as f:
+            return json.load(f)['questions']
 
     def get_most_similar_template(self, query: str):
         """
@@ -51,28 +46,31 @@ class Chatbot:
         
         # Calculate similarities for all template keys
         similarities = []
-        for key in self.templates.keys():
+        for qa_pair in self.templates:
+            key = qa_pair['question']
+            answer = qa_pair['answer']
             key_embedding = self.embeddings.embed_query(key)
             # Calculate cosine similarity
             similarity = np.dot(query_embedding, key_embedding) / (
                 np.linalg.norm(query_embedding) * np.linalg.norm(key_embedding)
             )
-            similarities.append((key, similarity))
+            similarities.append((key, answer, similarity))
         
         # Sort by similarity score
-        similarities.sort(key=lambda x: x[1], reverse=True)
+        similarities.sort(key=lambda x: x[2], reverse=True)
         
-        # Print all similarities for debugging
+        # # Print all similarities for debugging
         # print("\nSimilarity Scores:")
-        # for key, score in similarities:
+        # for key, answer, score in similarities:
         #     print(f"Key: {key}")
         #     print(f"Score: {score:.3f}")
-        #     print(f"Value: {self.templates[key]}\n")
+        #     print(f"Value: {answer}\n")
         
         # Return most similar if above threshold
-        if similarities and similarities[0][1] > self.similarity_threshold:
+        if similarities and similarities[0][2] > self.similarity_threshold:
             best_key = similarities[0][0]
-            return best_key, self.templates[best_key], similarities[0][1]
+            best_answer = similarities[0][1]
+            return best_key, best_answer, similarities[0][2]
         
         return None, None, 0.0
 
@@ -131,7 +129,7 @@ class Chatbot:
     def launch(self):
         iface = gr.ChatInterface(
             fn=self.chat,
-            title="Test Chatbot with Template Responses",
+            title="Chatbot for ThoughtfulAI",
             chatbot=gr.Chatbot()
         )
         iface.launch()
@@ -159,5 +157,8 @@ if __name__ == "__main__":
         ("human", "{input}"),
     ])
 
-    chatbot = Chatbot(llm, prompt)
+    #set the template file
+    template_file = "templates.json"
+
+    chatbot = Chatbot(llm, prompt, template_file)
     chatbot.launch()
