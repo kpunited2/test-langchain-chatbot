@@ -1,0 +1,10 @@
+torch
+gradio
+transformers
+llama-cpp-python
+langchain
+langchain-community
+langchain-huggingface
+jq
+sentence-transformers
+chromadb
