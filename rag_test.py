@@ -187,14 +187,13 @@ class Chatbot:
         context = "\n\n".join([chunk.page_content for chunk in relevant_chunks])
         return context
 
-    def chat(self, message: str, history: List[List[str]], uploaded_file=None) -> List[List[str]]:
+    def chat(self, message: str, history: List[List[str]]) -> List[List[str]]:
         """
         Process a chat message with history.
         
         Args:
             message: The current message from the user
             history: List of [user_message, assistant_message] pairs from Gradio
-            uploaded_file: Optional uploaded document to reference
             
         Returns:
             Updated history with new message pair added
@@ -237,9 +236,12 @@ class Chatbot:
             if document_context:
                 print("Adding document context to query")
                 enhanced_message = (
-                    f"{message}\n\n"
-                    f"Here is relevant information from the uploaded document:\n"
-                    f"{document_context}"
+                    f"User question: {message}\n\n"
+                    f"Relevant information from document:\n{document_context}\n\n"
+                    f"Based on the above document information, please provide a comprehensive answer to the user's question. "
+                    f"Synthesize information from the document to provide a helpful response. "
+                    f"If the document doesn't contain enough information to fully answer the question, "
+                    f"clearly state that and then provide your best response based on general knowledge."
                 )
                 # Use chain with history for LLM response
                 response = self.chain_with_history.invoke(
@@ -312,11 +314,6 @@ class Chatbot:
                     clear_docs = gr.Button("Clear Document Context")
             
             # Event handlers
-            def process_message(msg, chat_history, doc):
-                if not msg.strip():
-                    return chat_history
-                return self.chat(msg, chat_history, doc)
-            
             def handle_file_upload(file, chat_history):
                 if file is None:
                     return chat_history
@@ -350,9 +347,10 @@ class Chatbot:
                 queue=True
             )
             
+            # Fix: Remove the uploaded_file from the inputs to message.submit
             message.submit(
-                process_message,
-                inputs=[message, chatbot, None],  # Pass None instead of uploaded_file
+                self.chat,
+                inputs=[message, chatbot],  # Remove None from here
                 outputs=chatbot,
                 queue=True
             ).then(
@@ -362,9 +360,10 @@ class Chatbot:
                 queue=False
             )
             
+            # Fix: Remove the uploaded_file from the inputs to submit.click
             submit.click(
-                process_message,
-                inputs=[message, chatbot, None],  # Pass None instead of uploaded_file
+                self.chat,
+                inputs=[message, chatbot],  # Remove None from here
                 outputs=chatbot,
                 queue=True
             ).then(
