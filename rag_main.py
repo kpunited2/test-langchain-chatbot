@@ -13,10 +13,11 @@ import tempfile
 from langchain_community.document_loaders import TextLoader, PyPDFLoader, Docx2txtLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
+import glob
 
 
 class Chatbot:
-    def __init__(self, llm, prompt, template_file):
+    def __init__(self, llm, prompt, template_file, content_folder):
         self.templates = self.load_template(template_file)
         self.messages_by_id: Dict[str, List] = {}
         self.chain_with_history = RunnableWithMessageHistory(
@@ -28,14 +29,20 @@ class Chatbot:
         self.embeddings = HuggingFaceEmbeddings(
                                                 model_name="sentence-transformers/all-mpnet-base-v2"
                                             )
-        self.similarity_threshold = 0.5
+        self.similarity_threshold = 0.9
         self.document_chunks: List[Document] = []
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             length_function=len,
         )
-    
+
+        #store the contents of the content folder as text chunks
+        txt_files = glob.glob(os.path.join(content_folder, '*.txt'))
+        print(f'Using the following files as context: {txt_files}')
+        self.document_chunks = self.process_document(txt_files)
+
+
     def store_messages(self, session_id: str) -> ChatMessageHistory:
         """Return a message store for the given session ID."""
         if session_id not in self.messages_by_id:
@@ -78,7 +85,7 @@ class Chatbot:
         
         return None, None, 0.0
 
-    def process_document(self, file_obj) -> List[Document]:
+    def process_document(self, file_objs:List[str]) -> List[Document]:
         """
         Process an uploaded document and convert it to text chunks for RAG.
         
@@ -88,65 +95,37 @@ class Chatbot:
         Returns:
             List of Document objects containing the processed text chunks
         """
-        if file_obj is None:
-            return []
+
             
-        print(f"Processing document: {file_obj.name}")
-        
-        # Create a temporary file to save the uploaded file
-        file_extension = os.path.splitext(file_obj.name)[1].lower()
-        temp_path = None
-        
-        try:
-            # Gradio's file upload gives us a path rather than a file object with read method
-            if hasattr(file_obj, 'name'):
-                # Copy the file to a temp location to ensure we have proper access
-                with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
-                    temp_path = temp_file.name
-                    
-                    # If it's a NamedString (Gradio specific), we can access the path
-                    if hasattr(file_obj, 'path'):
-                        # Copy content from the original file to our temp file
-                        with open(file_obj.path, 'rb') as src_file:
-                            temp_file.write(src_file.read())
-                    else:
-                        # Fallback in case file_obj has a read method
-                        try:
-                            temp_file.write(file_obj.read())
-                        except AttributeError:
-                            print("File object doesn't have a read method, trying to access as path")
-                            with open(file_obj, 'rb') as src_file:
-                                temp_file.write(src_file.read())
-            else:
-                # If file_obj is just a path string
-                temp_path = file_obj
-            
-            # Load document based on file type
-            if file_extension == '.txt':
-                loader = TextLoader(temp_path)
-            elif file_extension == '.pdf':
-                loader = PyPDFLoader(temp_path)
-            elif file_extension in ['.doc', '.docx']:
-                loader = Docx2txtLoader(temp_path)
-            else:
-                # Default to text loader for unknown types
-                loader = TextLoader(temp_path)
+        print(f"Processing documents: {file_objs}")
+        chunks = []
+        for file_path in file_objs:
+            try:
                 
-            documents = loader.load()
+                #make quick read and write in ascii format to remove invalid characters
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    text = f.read()
+                # Filter out non-ASCII characters
+                clean_content = ''.join(char for char in text if ord(char) < 128)
+                with open(file_path, 'w') as f:
+                    f.write(clean_content)
+
+                # Load document based on file type
+                loader = TextLoader(file_path)
+                    
+                documents = loader.load()
+                
+                # Split documents into chunks
+                chunks.extend(self.text_splitter.split_documents(documents))
+                    
+                print(f"Document processed into {len(chunks)} chunks")
+
             
-            # Split documents into chunks
-            chunks = self.text_splitter.split_documents(documents)
-            
-            print(f"Document processed into {len(chunks)} chunks")
-            return chunks
-            
-        except Exception as e:
-            print(f"Error processing document: {str(e)}")
-            return []
-        finally:
-            # Clean up the temporary file if we created one
-            if temp_path and temp_path != file_obj and os.path.exists(temp_path):
-                os.remove(temp_path)
+            except Exception as e:
+                print(f"Error processing document: {str(e)}")
+                continue
+        #print(chunks[0])
+        return chunks
     
     def get_relevant_document_context(self, query: str) -> Optional[str]:
         """
@@ -186,7 +165,8 @@ class Chatbot:
         # Combine relevant chunks into a context string
         context = "\n\n".join([chunk.page_content for chunk in relevant_chunks])
 
-        print(f'Found the following relevant chunks for the context files: {context}')
+        print(f"Using the following chunks as relevant context: {context}")
+
         return context
 
     def chat(self, message: str, history: List[List[str]]) -> List[List[str]]:
@@ -315,39 +295,39 @@ class Chatbot:
                     # Add clear button for documents
                     clear_docs = gr.Button("Clear Document Context")
             
-            # Event handlers
-            def handle_file_upload(file, chat_history):
-                if file is None:
-                    return chat_history
+            # # Event handlers
+            # def handle_file_upload(file, chat_history):
+            #     if file is None:
+            #         return chat_history
                 
-                # Process the file once
-                self.document_chunks = self.process_document(file)
+            #     # Process the file once
+            #     self.document_chunks = self.process_document(file)
                 
-                if self.document_chunks:
-                    chat_history.append([
-                        f"I've uploaded {file.name}.", 
-                        f"I've processed the document '{file.name}' and extracted {len(self.document_chunks)} chunks of content. You can now ask questions about it!"
-                    ])
-                else:
-                    chat_history.append([
-                        f"I've uploaded {file.name}.", 
-                        f"I couldn't process the document '{file.name}'. Please check if the file format is supported (PDF, TXT, DOC, DOCX)."
-                    ])
+            #     if self.document_chunks:
+            #         chat_history.append([
+            #             f"I've uploaded {file.name}.", 
+            #             f"I've processed the document '{file.name}' and extracted {len(self.document_chunks)} chunks of content. You can now ask questions about it!"
+            #         ])
+            #     else:
+            #         chat_history.append([
+            #             f"I've uploaded {file.name}.", 
+            #             f"I couldn't process the document '{file.name}'. Please check if the file format is supported (PDF, TXT, DOC, DOCX)."
+            #         ])
                 
-                return chat_history
+            #     return chat_history
             
-            def clear_document_context(chat_history):
-                self.document_chunks = []
-                chat_history.append([None, "Document context has been cleared. The chatbot will no longer reference previously uploaded documents."])
-                return chat_history
+            # def clear_document_context(chat_history):
+            #     self.document_chunks = []
+            #     chat_history.append([None, "Document context has been cleared. The chatbot will no longer reference previously uploaded documents."])
+            #     return chat_history
             
-            # Set up event handling for file uploads separately
-            uploaded_file.change(
-                handle_file_upload,
-                inputs=[uploaded_file, chatbot],
-                outputs=[chatbot],
-                queue=True
-            )
+            # # Set up event handling for file uploads separately
+            # uploaded_file.change(
+            #     handle_file_upload,
+            #     inputs=[uploaded_file, chatbot],
+            #     outputs=[chatbot],
+            #     queue=True
+            # )
             
             # Fix: Remove the uploaded_file from the inputs to message.submit
             message.submit(
@@ -375,13 +355,13 @@ class Chatbot:
                 queue=False
             )
             
-            # Handle document clearing
-            clear_docs.click(
-                clear_document_context,
-                inputs=[chatbot],
-                outputs=[chatbot],
-                queue=True
-            )
+            # # Handle document clearing
+            # clear_docs.click(
+            #     clear_document_context,
+            #     inputs=[chatbot],
+            #     outputs=[chatbot],
+            #     queue=True
+            # )
                             
         interface.launch()
 
@@ -410,6 +390,6 @@ if __name__ == "__main__":
 
     #set the template file
     template_file = "templates.json"
-
-    chatbot = Chatbot(llm, prompt, template_file)
+    content_folder = "content"
+    chatbot = Chatbot(llm, prompt, template_file, content_folder)
     chatbot.launch()
